@@ -1,0 +1,182 @@
+import re
+import subprocess
+import sys
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+
+# DB and settings imports
+from sqlalchemy import create_engine
+import settings.settings as settings
+import database
+import logger
+import message_formatter
+
+# State definitions for conversation
+ASK_CAR_NUMBER, ASK_REPORT_NUMBER = range(2)
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sends a message when the command /start is issued."""
+    await update.message.reply_text("안녕하세요! 안전신문고 크롤러 봇입니다. /help 를 입력하여 메뉴를 확인하세요.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Displays the main menu."""
+    keyboard = [
+        [InlineKeyboardButton("1. 크롤링 시작", callback_data="start_crawl")],
+        [InlineKeyboardButton("2. 크롤링(min) 시작", callback_data="start_crawl_min")],
+        [InlineKeyboardButton("3. 차량검색", callback_data="search_car")],
+        [InlineKeyboardButton("4. 신고번호 검색", callback_data="search_report_number")],
+        [InlineKeyboardButton("5. 엑셀만 저장하기", callback_data="save_excel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("원하시는 작업을 선택하세요:", reply_markup=reply_markup)
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Parses the CallbackQuery and starts the corresponding action."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "start_crawl":
+        await query.edit_message_text(text="전체 크롤링 프로세스를 시작합니다. 완료되면 알려드리겠습니다...")
+        # Run start.py as a subprocess
+        process = subprocess.Popen([sys.executable, "--start"])
+        process.wait() # Wait for the subprocess to finish
+        if process.returncode == 0:
+            await context.bot.send_message(chat_id=query.message.chat_id, text="크롤링 및 모든 작업이 완료되었습니다.")
+        else:
+            logger.LoggerFactory.get_logger().error(f"Error running start.py. Exit code: {process.returncode}")
+            await context.bot.send_message(chat_id=query.message.chat_id, text="크롤링 중 오류가 발생했습니다. 자세한 내용은 로그를 확인해주세요.")
+        return ConversationHandler.END
+
+    elif query.data == "start_crawl_min":
+        await query.edit_message_text(text="크롤링(min) 프로세스를 시작합니다. 완료되면 알려드리겠습니다...")
+        process = subprocess.Popen([sys.executable, "--start", "--min"])
+        process.wait() # Wait for the subprocess to finish
+        if process.returncode == 0:
+            await context.bot.send_message(chat_id=query.message.chat_id, text="크롤링(min) 및 모든 작업이 완료되었습니다.")
+        else:
+            logger.LoggerFactory.get_logger().error(f"Error running start.py --min. Exit code: {process.returncode}")
+            await context.bot.send_message(chat_id=query.message.chat_id, text="크롤링(min) 중 오류가 발생했습니다. 자세한 내용은 로그를 확인해주세요.")
+        return ConversationHandler.END
+
+    elif query.data == "save_excel":
+        await query.edit_message_text(text="`debug_save.py`를 실행하여 엑셀 저장을 시작합니다...")
+        # Run debug_save.py as a subprocess
+        process = subprocess.Popen([sys.executable, "--debug-save"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        if process.returncode == 0:
+            response = stdout.decode('utf-8')
+            await context.bot.send_message(chat_id=query.message.chat_id, text=f"엑셀 저장 완료.\n\n{response}")
+        else:
+            error_message = stderr.decode('utf-8')
+            logger.LoggerFactory.get_logger().error(f"Error running debug_save.py: {error_message}")
+            await context.bot.send_message(chat_id=query.message.chat_id, text=f"오류가 발생했습니다:\n{error_message}")
+        return ConversationHandler.END
+
+    elif query.data == "search_car":
+        await query.edit_message_text(text="검색할 차량번호를 입력하세요. 취소하려면 /cancel 을 입력하세요.")
+        return ASK_CAR_NUMBER
+
+    elif query.data == "search_report_number":
+        await query.edit_message_text(text="검색할 신고번호를 입력하세요. 취소하려면 /cancel 을 입력하세요.")
+        return ASK_REPORT_NUMBER
+
+    return ConversationHandler.END
+
+async def receive_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receives the car number, searches the DB, and returns the results."""
+    car_number = re.sub(r'\s+', '', update.message.text)
+    await update.message.reply_text(f"차량번호 '{car_number}'에 대한 신고 내역을 검색합니다...")
+
+    try:
+        engine = create_engine(f'sqlite:///{settings.db_path}', connect_args={'timeout': 15})
+        results = database.search_by_car_number(engine, car_number)
+
+        if not results:
+            await update.message.reply_text("해당 차량번호에 대한 신고 내역을 찾을 수 없습니다.")
+            return ConversationHandler.END
+
+        title = f"총 {len(results)}건의 신고 내역을 찾았습니다."
+        response_message = message_formatter.format_report_list(results, title)
+        
+        await message_formatter.send_message_in_chunks(context.bot, update.message.chat_id, response_message)
+
+    except Exception as e:
+        logger.LoggerFactory.get_logger().error(f"Error during car number search: {e}")
+        await update.message.reply_text(f"차량번호 검색 중 오류가 발생했습니다: {e}")
+
+    return ConversationHandler.END
+
+async def receive_report_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receives the report number, searches the DB, and returns the results."""
+    report_number = re.sub(r'\s+', '', update.message.text)
+    await update.message.reply_text(f"신고번호 '{report_number}'에 대한 신고 내역을 검색합니다...")
+
+    try:
+        engine = create_engine(f'sqlite:///{settings.db_path}', connect_args={'timeout': 15})
+        results = database.search_by_report_number(engine, report_number)
+
+        if not results:
+            await update.message.reply_text("해당 신고번호에 대한 신고 내역을 찾을 수 없습니다.")
+            return ConversationHandler.END
+
+        title = f"총 {len(results)}건의 신고 내역을 찾았습니다."
+        response_message = message_formatter.format_report_list(results, title)
+
+        await message_formatter.send_message_in_chunks(context.bot, update.message.chat_id, response_message)
+
+    except Exception as e:
+        logger.LoggerFactory.get_logger().error(f"Error during report number search: {e}")
+        await update.message.reply_text(f"신고번호 검색 중 오류가 발생했습니다: {e}")
+
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancels and ends the conversation."""
+    await update.message.reply_text("작업을 취소했습니다.")
+    return ConversationHandler.END
+
+def main() -> None:
+    """Run the bot."""
+    logger.LoggerFactory.create_logger()
+
+    # Set logging level for httpx to WARNING to suppress verbose INFO logs
+    import logging
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    # Check if Telegram is enabled
+    if not settings.telegram_enabled:
+        logger.LoggerFactory.get_logger().info("Telegram 기능이 비활성화되어 봇을 시작하지 않습니다.")
+        return
+
+    # Get the token from environment variable
+    token = settings.telegram_token
+    if not token: # This check is somewhat redundant now but good for safety
+        logger.LoggerFactory.get_logger().error("TELEGRAM_TOKEN 환경변수가 설정되지 않았습니다.")
+        return
+
+    # Create the Application and pass it your bot's token.
+    application = Application.builder().token(token).build()
+
+    # Add command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("h", help_command))
+
+    # Add conversation handler for menu buttons and car search
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button)],
+        states={
+            ASK_CAR_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_car_number)],
+            ASK_REPORT_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_report_number)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    application.add_handler(conv_handler)
+
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
