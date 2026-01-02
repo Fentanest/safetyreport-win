@@ -51,6 +51,7 @@ exe = EXE(
     name='mysafetyreport',
     debug=False,
     bootloader_ignore_signals=False,
+    onefile=True,
     strip=False,
     upx=True,
     upx_exclude=[],
