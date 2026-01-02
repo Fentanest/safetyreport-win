@@ -1,0 +1,45 @@
+name: Build Windows EXE (UPX Diet)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest  # UPX 최적화 위해 Windows runner 추천
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'  # PySide6 등 당신 프로젝트 맞춤
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pyinstaller upx  # UPX pip으로 설치 (Action 자동 처리)
+    
+    - name: Build with PyInstaller spec + UPX
+      uses: sayyid5416/pyinstaller@v1
+      with:
+        spec: 'app.spec'  # noconsole + onefile spec 파일
+        requirements: 'requirements.txt'
+        options: '--onefile,--noconsole,--upx-dir=/usr/bin,--strip'  # UPX + strip 최적화!
+        upload_exe_with_name: 'app-windows-upx'
+    
+    - name: Upload EXE Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-app-upx
+        path: dist/
+    
+    - name: Create Release (optional)
+      if: github.event_name == 'release'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Windows UPX Release
+        draft: false
+        prerelease: false
