@@ -5,26 +5,26 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest  # UPX 최적화 위해 Windows runner 추천
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
     
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.12'  # PySide6 등 당신 프로젝트 맞춤
+        python-version: '3.12'
     
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
-        pip install pyinstaller upx  # UPX pip으로 설치 (Action 자동 처리)
+        pip install pyinstaller upx
     
     - name: Build with PyInstaller spec + UPX
       uses: sayyid5416/pyinstaller@v1
       with:
         spec: 'app.spec'  # noconsole + onefile spec 파일
         requirements: 'requirements.txt'
-        options: '--onefile,--noconsole,--upx-dir=/usr/bin,--strip'  # UPX + strip 최적화!
+        options: '--onefile,--noconsole,--upx-dir=/usr/bin'
         upload_exe_with_name: 'app-windows-upx'
     
     - name: Upload EXE Artifact
