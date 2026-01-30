@@ -2,10 +2,11 @@ import settings.settings as settings
 import pandas as pd
 import os
 import gspread
-from gspread.exceptions import WorksheetNotFound, SpreadsheetNotFound
+from gspread.exceptions import WorksheetNotFound, SpreadsheetNotFound, APIError
 import logger
 import sys
 import subprocess
+import time
 
 if settings.google_sheet_enabled:
     try:
@@ -101,8 +102,50 @@ def save_to_google_sheet(df, photo_cols):
     logger.LoggerFactory.logbot.debug("기존 구글 스프레드시트 데이터를 삭제합니다.")
 
     data_to_upload = [df_gsheet.columns.values.tolist()] + df_gsheet.astype(str).values.tolist()
-    worksheet.update(data_to_upload, value_input_option='USER_ENTERED')
+
+    max_retries = 5
+    base_delay = 10
     
+    # Upload header
+    for attempt in range(max_retries):
+        try:
+            worksheet.update([data_to_upload[0]], value_input_option='USER_ENTERED')
+            logger.LoggerFactory.logbot.info("구글 시트 헤더 업로드를 완료했습니다.")
+            break
+        except APIError as e:
+            if e.response.status_code == 502:
+                delay = base_delay * (2 ** attempt)
+                logger.LoggerFactory.logbot.warning(f"구글 시트 업로드 중 502 오류 발생. {delay}초 후 재시도합니다... (시도 {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                logger.LoggerFactory.logbot.error(f"구글 시트 헤더 업로드 중 예상치 못한 API 오류 발생: {e}")
+                return
+    else:
+        logger.LoggerFactory.logbot.error("최대 재시도 횟수 초과 후에도 구글 시트 헤더 업로드 실패.")
+        return
+
+    # Upload data in chunks
+    chunk_size = 50
+    for i in range(1, len(data_to_upload), chunk_size):
+        chunk = data_to_upload[i:i+chunk_size]
+        for attempt in range(max_retries):
+            try:
+                worksheet.append_rows(chunk, value_input_option='USER_ENTERED')
+                logger.LoggerFactory.logbot.info(f"{i}번째 행부터 {len(chunk)}개 데이터 구글 시트 업로드를 완료했습니다.")
+                time.sleep(1) #api 과부하 방지
+                break
+            except APIError as e:
+                if e.response.status_code == 502:
+                    delay = base_delay * (2 ** attempt)
+                    logger.LoggerFactory.logbot.warning(f"구글 시트 업로드 중 502 오류 발생. {delay}초 후 재시도합니다... (시도 {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    logger.LoggerFactory.logbot.error(f"구글 시트 데이터 업로드 중 예상치 못한 API 오류 발생: {e}")
+                    return
+        else:
+            logger.LoggerFactory.logbot.error("최대 재시도 횟수 초과 후에도 구글 시트 데이터 업로드 실패.")
+            return
+
     worksheet.resize(rows=len(data_to_upload), cols=len(data_to_upload[0]))
     
     if len(data_to_upload) > 1:
