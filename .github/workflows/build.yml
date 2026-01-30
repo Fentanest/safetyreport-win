@@ -1,0 +1,75 @@
+name: Build Windows Executable
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: [self-hosted, Windows, X64, 230]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Clean previous build artifacts
+      shell: powershell
+      run: |
+        Remove-Item -Path "venv", "build", "dist" -Recurse -Force -ErrorAction SilentlyContinue
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.14'
+
+    - name: Create and populate virtual environment
+      shell: powershell
+      run: |
+        python -m venv venv
+        .\venv\Scripts\python.exe -m pip install --upgrade pip
+        .\venv\Scripts\pip.exe install -r requirements.txt
+        .\venv\Scripts\pip.exe install pyinstaller
+
+    - name: Setup UPX 5.1.0
+      shell: powershell
+      id: setup_upx
+      run: |
+        $version = "5.1.0"
+        $upxExtractDir = "${env:TEMP}\upx"
+        $upxDir = Join-Path $upxExtractDir "upx-${version}-win64"
+        $upxPath = Join-Path $upxDir "upx.exe"
+        $zipPath = "${env:TEMP}\upx-${version}-win64.zip"
+        $downloadUrl = "https://github.com/upx/upx/releases/download/v${version}/upx-${version}-win64.zip"
+
+        if (-not (Test-Path $upxPath)) {
+          if (Test-Path $upxExtractDir) { Remove-Item -Recurse -Force $upxExtractDir }
+          Write-Output "Downloading UPX $version from $downloadUrl"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $upxExtractDir -Force
+        }
+        
+        if (-not (Test-Path $upxPath)) {
+          Write-Error "UPX executable not found at $upxPath after download/extract."
+          exit 1
+        }
+
+        Write-Output "Found UPX at: $upxPath"
+        echo "upx_path=$upxPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+    - name: Build executable with PyInstaller
+      shell: powershell
+      run: |
+        # We run PyInstaller first without UPX, then compress explicitly.
+        # This provides more control and clearer logs.
+        .\venv\Scripts\pyinstaller.exe app.spec --noupx
+
+    - name: Compress executable with UPX
+      shell: powershell
+      run: |
+        $upxPath = "${{ steps.setup_upx.outputs.upx_path }}"
+        & $upxPath --best --lzma ".\dist\mysafetyreport.exe"
+
+    - name: Upload executable artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: safetyreport-win
+        path: .\dist\mysafetyreport.exe
