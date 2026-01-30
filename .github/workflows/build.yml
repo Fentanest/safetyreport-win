@@ -60,7 +60,7 @@ jobs:
       run: |
         # We run PyInstaller first without UPX, then compress explicitly.
         # This provides more control and clearer logs.
-        .\venv\Scripts\pyinstaller.exe app.spec --noupx
+        .\venv\Scripts\pyinstaller.exe app.spec
 
     - name: Compress executable with UPX
       shell: powershell
