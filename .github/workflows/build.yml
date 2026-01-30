@@ -25,9 +25,9 @@ jobs:
       shell: powershell
       run: |
         python -m venv venv
-        .\venv\Scripts\python.exe -m pip install --upgrade pip
-        .\venv\Scripts\pip.exe install -r requirements.txt
-        .\venv\Scripts\pip.exe install pyinstaller
+        .\venv\Scripts\python.exe -m pip install --no-cache-dir --upgrade pip
+        .\venv\Scripts\pip.exe install --no-cache-dir -r requirements.txt
+        .\venv\Scripts\pip.exe install --no-cache-dir pyinstaller
 
     - name: Setup UPX 5.1.0
       shell: powershell
