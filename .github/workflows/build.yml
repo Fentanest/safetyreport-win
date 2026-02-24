@@ -2,26 +2,76 @@ name: Build Windows Executable
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  build-windows:
+  build-and-release-windows:
     runs-on: [self-hosted, Windows, X64, 230]
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get version from version.py
+      id: get_version
+      shell: powershell
+      run: |
+        $versionString = (Get-Content version.py -Raw) -match '__version__ = "(.+)"' | ForEach-Object { $matches[1] }
+        if (-not $versionString) {
+          Write-Error "version.py에서 __version__을 찾을 수 없습니다."
+          exit 1
+        }
+        echo "version=$versionString" >> $env:GITHUB_OUTPUT
+        echo "tag=v$versionString" >> $env:GITHUB_OUTPUT
+        Write-Output "Detected version: $versionString, tag: v$versionString"
+
+    - name: Check if tag already exists
+      id: check_tag
+      shell: powershell
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG_NAME: ${{ steps.get_version.outputs.tag }}
+      run: |
+        $headers = @{
+          "Authorization" = "token $env:GITHUB_TOKEN"
+          "Accept" = "application/vnd.github.v3+json"
+        }
+        $url = "https://api.github.com/repos/${{ github.repository }}/tags/$env:TAG_NAME"
+        try {
+          $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+          echo "tag_exists=true" >> $env:GITHUB_OUTPUT
+          Write-Output "Tag $env:TAG_NAME already exists. Skipping build."
+        }
+        catch {
+          if ($_.Exception.Response.StatusCode -eq 404) {
+            echo "tag_exists=false" >> $env:GITHUB_OUTPUT
+            Write-Output "Tag $env:TAG_NAME does not exist. Proceeding with build."
+          } else {
+            Write-Error "Failed to check tag: $($_.Exception.Message)"
+            exit 1
+          }
+        }
 
     - name: Clean previous build artifacts
+      if: steps.check_tag.outputs.tag_exists == 'false'
       shell: powershell
       run: |
         Remove-Item -Path "venv", "build", "dist" -Recurse -Force -ErrorAction SilentlyContinue
 
     - name: Set up Python
+      if: steps.check_tag.outputs.tag_exists == 'false'
       uses: actions/setup-python@v5
       with:
         python-version: '3.14'
 
     - name: Create and populate virtual environment
+      if: steps.check_tag.outputs.tag_exists == 'false'
       shell: powershell
       run: |
         python -m venv venv
@@ -30,6 +80,7 @@ jobs:
         .\venv\Scripts\pip.exe install --no-cache-dir pyinstaller
 
     - name: Setup UPX 5.1.0
+      if: steps.check_tag.outputs.tag_exists == 'false'
       shell: powershell
       id: setup_upx
       run: |
@@ -55,21 +106,38 @@ jobs:
         Write-Output "Found UPX at: $upxPath"
         echo "upx_path=$upxPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-    - name: Build executable with PyInstaller
+    - name: Build executable with PyInstaller (only if new version)
+      if: steps.check_tag.outputs.tag_exists == 'false'
       shell: powershell
       run: |
         # We run PyInstaller first without UPX, then compress explicitly.
         # This provides more control and clearer logs.
         .\venv\Scripts\pyinstaller.exe app.spec
 
-    - name: Compress executable with UPX
+    - name: Compress executable with UPX (only if new version)
+      if: steps.check_tag.outputs.tag_exists == 'false'
       shell: powershell
       run: |
         $upxPath = "${{ steps.setup_upx.outputs.upx_path }}"
         & $upxPath --best --lzma --force ".\dist\mysafetyreport.exe"
 
-    - name: Upload executable artifact
+    - name: Upload executable artifact (only if new version)
+      if: steps.check_tag.outputs.tag_exists == 'false'
       uses: actions/upload-artifact@v4
       with:
-        name: safetyreport-win
+        name: safetyreport-win-v${{ steps.get_version.outputs.version }}
         path: .\dist\mysafetyreport.exe
+
+    - name: Create GitHub Release (only if new version)
+      if: steps.check_tag.outputs.tag_exists == 'false'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        name: "Safety Report Crawler v${{ steps.get_version.outputs.version }}"
+        body: |
+          Automated release of Safety Report Crawler v${{ steps.get_version.outputs.version }}.
+          Commit: ${{ github.sha }}
+        files: .\dist\mysafetyreport.exe
+        draft: false
+        prerelease: false
+        generate_release_notes: true

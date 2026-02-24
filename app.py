@@ -24,12 +24,13 @@ import bot
 import debug_save
 import notifier
 import asyncio
+from version import __version__
 
 class OptionsDialog(QDialog, Ui_Dialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
-        self.setWindowTitle("옵션")
+        self.setWindowTitle(f"옵션 v{__version__}")
 
         self.radioButtonUseChrome.setChecked(True)
 
@@ -169,7 +170,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
-        self.setWindowTitle("안전신문고 크롤러")
+        self.setWindowTitle(f"안전신문고 크롤러 v{__version__}")
 
         self.process = QProcess()
         self.process.readyReadStandardOutput.connect(self.handle_stdout)
