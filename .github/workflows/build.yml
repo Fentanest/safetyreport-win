@@ -119,14 +119,14 @@ jobs:
       shell: powershell
       run: |
         $upxPath = "${{ steps.setup_upx.outputs.upx_path }}"
-        & $upxPath --best --lzma --force ".\dist\mysafetyreport.exe"
+        & $upxPath --best --lzma --force dist/mysafetyreport.exe"
 
     - name: Upload executable artifact (only if new version)
       if: steps.check_tag.outputs.tag_exists == 'false'
       uses: actions/upload-artifact@v4
       with:
         name: safetyreport-win-v${{ steps.get_version.outputs.version }}
-        path: .\dist\mysafetyreport.exe
+        path: dist/mysafetyreport.exe
 
     - name: Create GitHub Release (only if new version)
       if: steps.check_tag.outputs.tag_exists == 'false'
@@ -137,7 +137,7 @@ jobs:
         body: |
           Automated release of Safetyreport Crawler v${{ steps.get_version.outputs.version }}.
           Commit: ${{ github.sha }}
-        files: .\dist\mysafetyreport.exe
+        files: dist/mysafetyreport.exe
         draft: false
         prerelease: false
         generate_release_notes: true
