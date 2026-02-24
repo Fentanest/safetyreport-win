@@ -133,9 +133,9 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ steps.get_version.outputs.version }}
-        name: "Safety Report Crawler v${{ steps.get_version.outputs.version }}"
+        name: "Safetyreport Crawler v${{ steps.get_version.outputs.version }}"
         body: |
-          Automated release of Safety Report Crawler v${{ steps.get_version.outputs.version }}.
+          Automated release of Safetyreport Crawler v${{ steps.get_version.outputs.version }}.
           Commit: ${{ github.sha }}
         files: .\dist\mysafetyreport.exe
         draft: false
